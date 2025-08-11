@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vision Guard</title>
+
+  <!-- Use tfjs 1.x (compatible with teachablemachine-pose helper) to avoid Pt.fromPixels error -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+
+  <style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap');
+
+  * { box-sizing: border-box; }
+
+  body, html {
+    margin: 0; padding: 0;
+    height: 100vh;
+    width: 100vw;
+    background: #000;
+    font-family: 'Orbitron', sans-serif;
+    color: #00f7ff;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  #glowCanvas {
+    position: relative;
+    background: rgba(0,0,0,0.9);
+    border: 3px solid #00f7ff;
+    box-shadow: 0 0 30px #00f7ff;
+    border-radius: 15px;
+    width: 95vw;
+    height: 95vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 30px;
+  }
+
+  #appTitle {
+    font-size: 3rem;
+    margin-bottom: 20px;
+    text-align: center;
+    text-shadow: 0 0 12px #00f7ff;
+  }
+
+  .hex-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 40px;
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  .bottom-row-spacer { grid-column: 1 / 2; }
+
+  .hex-button {
+    width: 265px;
+    height: 190px;
+    background: #000;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    border: 4px solid #00f7ff;
+    color: #00f7ff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.8rem;
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    text-align: center;
+  }
+
+  .hex-button::before, .hex-button::after,
+  .hex-button > span::before, .hex-button > span::after {
+    content: "";
+    position: absolute;
+    background: transparent;
+    transition: background 0.3s ease;
+    pointer-events: none;
+    border-radius: 2px;
+  }
+  
+  .hex-button::before { top: 3px; left: 50%; transform: translateX(-50%); width: 60%; height: 6px; border-radius: 3px; }
+  .hex-button::after  { bottom: 3px; left: 50%; transform: translateX(-50%); width: 60%; height: 6px; border-radius: 3px; }
+  .hex-button > span::before { top: 50%; left: 5px; transform: translateY(-50%); width: 6px; height: 60%; }
+  .hex-button > span::after  { top: 50%; right: 5px; transform: translateY(-50%); width: 6px; height: 60%; }
+
+  .hex-button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 0 30px #00f7ff;
+    border-color: #00ffff;
+  }
+  .hex-button:hover::before, .hex-button:hover::after,
+  .hex-button:hover > span::before, .hex-button:hover > span::after { background: #00f7ff; }
+
+  .hex-button > span { position: relative; display: flex; justify-content: center; align-items: center; width:100%; height:100%; }
+
+  /* Tabs: make them scrollable and can expand to canvas area */
+  .tab {
+    display: none;
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+    width: calc(100% - 60px);
+    max-height: calc(95vh - 160px);
+    overflow: auto;
+    padding: 16px;
+    border-radius: 10px;
+  }
+  .tab.active { display: block; opacity: 1; }
+  .tab.fade-in { opacity: 1; }
+
+  .face-center-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;       /* center horizontally */
+  justify-content: center;   /* center vertically if needed */
+  gap: 15px;                 /* spacing between video and faceArea */
+  margin-top: 20px;
+}
+
+#face-camera-preview {
+  max-width: 100%;
+  border-radius: 6px;
+  box-shadow: 0 0 10px #222;
+}
+
+#faceArea {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+#capturedFace {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  max-width: 100%;
+}
+
+#faceCaptureBtn {
+  padding: 10px 20px;
+  cursor: pointer;
+  background-color: #007BFF;
+  color: white;
+  border: none;
+  border-radius: 4px;
+}
+
+.threat-center-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;  /* center horizontally */
+  gap: 15px;
+  margin-top: 20px;
+}
+
+#threatVideo {
+  max-width: 100%;
+  border-radius: 6px;
+  box-shadow: 0 0 10px #222;
+  width: 560px;  /* or set max-width as you prefer */
+  height: 360px;
+}
+
+#threatToggleBtn {
+  padding: 10px 20px;
+  cursor: pointer;
+  background-color: #007BFF;
+  color: white;
+  border: none;
+  border-radius: 4px;
+}
+
+  /* Back button */
+  .back-btn {
+    align-self: flex-start;
+    margin-bottom: 15px;
+    padding: 10px 18px;
+    font-size: 1rem;
+    background: transparent;
+    border: 2px solid #00f7ff;
+    border-radius: 8px;
+    color: #00f7ff;
+    cursor: pointer;
+    transition: background 0.3s ease;
+  }
+  .back-btn:hover { background: #00f7ff; color: #000; }
+
+  /* reduced sizes to fit nicely and centered */
+  #face-camera-preview { width: 420px; height: 315px; border: 3px solid #00f7ff; border-radius: 12px; background:black; display:block; margin-bottom:12px; }
+  #capturedFace { width: 420px; height: 315px; border: 3px solid #00f7ff; border-radius: 12px; background:black; display:block; margin-bottom:12px; }
+
+  #faceCaptureBtn { padding: 12px 24px; font-size: 1.1rem; background: transparent; border: 3px solid #00f7ff; border-radius: 12px; color: #00f7ff; cursor: pointer; margin-bottom: 12px; }
+  #faceCaptureBtn:hover { background: #00f7ff; color: #000; transform: scale(1.02); }
+
+  /* Threat area: only one video element for feed & results overlaying text */
+  #threatVideo { border: 3px solid #00f7ff; border-radius: 12px; background: black; width: 700px; height: 420px; margin-bottom: 12px; display:block; }
+  #threatToggleBtn { padding: 12px 24px; font-size: 1.1rem; background: transparent; border: 3px solid #00f7ff; border-radius: 12px; color: #00f7ff; cursor: pointer; margin-bottom: 12px; }
+  #threatToggleBtn:hover { background: #00f7ff; color: #000; transform: scale(1.02); }
+
+  .result-text { font-size: 1.2rem; margin-bottom: 12px; min-height: 1.5em; text-shadow: 0 0 8px #00f7ff; text-align:center; }
+
+  /* Logs */
+  #logContainer { width: 100%; max-width: none; height: auto; max-height: calc(95vh - 260px); overflow-y: auto; border: 2px solid #00f7ff; border-radius: 10px; padding: 15px; font-size: 1rem; background: #000; }
+  #logHeaders { display: flex; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid #00f7ff; font-weight: 700; font-size: 1.1rem; }
+  #logHeaders > div { width: 33%; text-align: center; }
+  #logBody div { display: flex; justify-content: space-between; border-bottom: 1px solid #00f7ff; padding: 8px 0; }
+  #logBody div > div { width: 33%; text-align: center; }
+
+  /* Settings inputs bigger */
+  input[type="text"] { width: 100%; margin-bottom: 15px; background:#000; color:#00f7ff; border: 2px solid #00f7ff; border-radius:8px; padding:10px; font-family: 'Orbitron', sans-serif; font-size: 1rem; }
+
+  #loadModelsBtn { padding: 12px 24px; font-size: 1.1rem; background: transparent; border: 3px solid #00f7ff; border-radius: 12px; color: #00f7ff; cursor: pointer; margin-bottom: 12px; }
+  #loadModelsBtn:hover { background: #00f7ff; color: #000; transform: scale(1.02); }
+
+  /* make settings and logs visually use the big area when active */
+  #settings.active, #logs.active { width: calc(100% - 60px); max-height: calc(95vh - 160px); }
+
+  /* small responsive tweaks */
+  @media (max-width: 900px) {
+    #threatVideo { width: 95%; height: auto; }
+    #face-camera-preview, #capturedFace { width: 95%; height: auto; }
+  }
+
+  </style>
+</head>
+<body>
+<div id="glowCanvas">
+  <h1 id="appTitle">Vision Guard</h1>
+  <div id="hexMenu" class="hex-grid">
+    <div class="hex-button" data-tab="face"><span>Face Recognition</span></div>
+    <div class="hex-button" data-tab="threat"><span>Threat Detection</span></div>
+    <div class="hex-button" data-tab="settings"><span>Settings</span></div>
+    <div class="bottom-row-spacer"></div>
+    <div class="hex-button" data-tab="logs"><span>Logs</span></div>
+  </div>
+
+ <!-- FACE TAB: ONLY 2 CANVASES (video preview + captured canvas) -->
+<div id="face" class="tab">
+  <button class="back-btn" id="backFromFace">Back</button>
+  <h2 style = "text-align: center;">Face Recognition</h2>
+
+  <!-- live camera preview (video element) -->
+  <div class="face-center-container">
+    <video id="face-camera-preview" autoplay playsinline muted></video>
+
+    <div id="faceArea">
+      <!-- CAPTURED snapshot canvas (single canvas to show captured image) -->
+      <canvas id="capturedFace" width="640" height="480"></canvas>
+      <button id="faceCaptureBtn" >Capture & Recognize</button>
+      <div class="result-text" id="faceResult">Result: -</div>
+    </div>
+  </div>
+</div>
+
+ <!-- THREAT TAB: only one video for feed & results -->
+<div id="threat" class="tab">
+  <button class="back-btn" id="backFromThreat">Back</button>
+  <h2 style="text-align: center;">Threat Detection (Pose Model)</h2>
+
+  <div class="threat-center-container">
+    <video id="threatVideo" autoplay muted playsinline></video>
+
+    <button id="threatToggleBtn">Start Detection</button>
+    <div class="result-text" id="threatResult">Result: -</div>
+  </div>
+</div>
+
+
+  <!-- SETTINGS -->
+  <div id="settings" class="tab">
+    <button class="back-btn" id="backFromSettings">Back</button>
+    <h2>Settings</h2>
+    <label for="faceModelURL">Face Model URL:</label><br>
+    <input type="text" id="faceModelURL" value="https://teachablemachine.withgoogle.com/models/AzW0UlFdz/"> <br>
+    <label for="threatModelURL">Threat (Pose) Model URL:</label><br>
+    <input type="text" id="threatModelURL" value="https://teachablemachine.withgoogle.com/models/k0POnJoE0/"> <br>
+    <label for="sheetDBUrl">Google Apps Script POST URL::</label><br>
+    <input type="text" id="sheetDBUrl" placeholder="https://script.google.com/macros/s/AKfycbwYbefS-aH9jkgW6ely2IZFv0BTGO67ArO14YN_Dk5hjqbajGlQqh_VMkcv76vg7giq/exec" value="https://script.google.com/macros/s/AKfycbwYbefS-aH9jkgW6ely2IZFv0BTGO67ArO14YN_Dk5hjqbajGlQqh_VMkcv76vg7giq/exec"> <br>
+    <button id="loadModelsBtn">Load Models</button>
+  </div>
+
+  <!-- LOGS -->
+<div id="logs" class="tab">
+  <button class="back-btn" id="backFromLogs">Back</button>
+  <h2>Logs</h2>
+  <div id="logContainer" style="display: flex; flex-direction: column; width: 100%; max-height: 500px; overflow-y: auto;">
+
+    <!-- Headers for columns -->
+    <div id="logHeaders" style="display: flex; font-weight: bold; padding: 8px 0; border-bottom: 2px solid #444;">
+      <div style="flex: 1;">Date</div>
+      <div style="flex: 1;">Threat Type</div>
+      <div style="flex: 1;">Face Detected</div>
+    </div>
+
+    <!-- Log rows container -->
+    <div id="logBody" style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px;">
+      <!-- Log rows inserted here by JS -->
+    </div>
+  </div>
+</div>
+
+
+<!-- audio: WebAudio used (no external file) -->
+<!-- include a short beep file as fallback (not required) -->
+<audio id="alertSound" preload="auto"></audio>
+<script>
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwYbefS-aH9jkgW6ely2IZFv0BTGO67ArO14YN_Dk5hjqbajGlQqh_VMkcv76vg7giq/exec";
+
+/* ========= GLOBALS ========= */
+const hexButtons = document.querySelectorAll('.hex-button');
+const tabs = document.querySelectorAll('.tab');
+const backButtons = document.querySelectorAll('.back-btn');
+
+let faceStream = null;
+let threatStream = null;
+
+let faceModel = null;
+let poseModel = null;
+
+let threatDetectionRunning = false;
+let threatInterval = null;
+
+const logsArr = []; // stores log rows locally
+
+/* ========= AUDIO (WebAudio oscillator alarm) ========= */
+let audioCtx = null;
+let alarmOsc = null;
+let alarmGain = null;
+let alarmPlaying = false;
+
+function ensureAudioContext() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function startAlarm() {
+  ensureAudioContext();
+  if (alarmPlaying) return;
+  alarmOsc = audioCtx.createOscillator();
+  alarmGain = audioCtx.createGain();
+  alarmOsc.type = 'sawtooth';
+  // gentle LFO to vary pitch
+  const lfo = audioCtx.createOscillator();
+  const lfoGain = audioCtx.createGain();
+  lfo.frequency.value = 2.0;
+  lfoGain.gain.value = 80;
+  lfo.connect(lfoGain);
+  lfoGain.connect(alarmOsc.frequency);
+
+  alarmOsc.frequency.value = 600;
+  alarmGain.gain.value = 0.1;
+  alarmOsc.connect(alarmGain);
+  alarmGain.connect(audioCtx.destination);
+  lfo.start();
+  alarmOsc.start();
+  alarmPlaying = true;
+}
+
+function stopAlarm() {
+  if (!alarmPlaying) return;
+  try { alarmOsc.stop(); } catch(e) {}
+  try { alarmOsc.disconnect(); alarmGain.disconnect(); } catch(e) {}
+  alarmOsc = null;
+  alarmGain = null;
+  alarmPlaying = false;
+}
+
+function triggerGate() {
+  fetch("http://192.168.1.6/ON") // <-- Replace with your ESP32 IP
+    .then(res => console.log("Gate trigger sent:", res.status))
+    .catch(err => console.error("Error triggering gate:", err));
+}
+/* ========= UI HELPERS ========= */
+function showTab(tabId) {
+  tabs.forEach(t => { t.classList.remove('active','fade-in'); t.style.display = 'none'; });
+  const tab = document.getElementById(tabId);
+  if (!tab) return;
+  tab.style.display = 'block';
+  requestAnimationFrame(() => {
+    tab.classList.add('active');
+    setTimeout(() => tab.classList.add('fade-in'), 10);
+  });
+  document.getElementById('hexMenu').style.display = 'none';
+
+  if (tabId === 'face') startFaceCamera();
+  if (tabId === 'threat') startThreatCamera();
+}
+
+function goBackToMenu() {
+  tabs.forEach(t => { t.classList.remove('active','fade-in'); t.style.display = 'none'; });
+  document.getElementById('hexMenu').style.display = 'grid';
+  stopFaceCamera();
+  stopThreatCamera();
+}
+
+hexButtons.forEach(btn => btn.addEventListener('click', () => showTab(btn.getAttribute('data-tab'))));
+backButtons.forEach(btn => btn.addEventListener('click', goBackToMenu));
+
+/* ========= CAMERA CONTROLS ========= */
+async function startFaceCamera() {
+  const video = document.getElementById("face-camera-preview");
+  if (faceStream) return;
+  try {
+    faceStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+    video.srcObject = faceStream;
+    await video.play().catch(()=>{});
+  } catch (err) {
+    console.error("Face camera error:", err);
+  }
+}
+function stopFaceCamera() {
+  if (!faceStream) return;
+  faceStream.getTracks().forEach(track => track.stop());
+  faceStream = null;
+}
+
+async function startThreatCamera() {
+  const video = document.getElementById("threatVideo");
+  if (threatStream) return;
+  try {
+    threatStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+    video.srcObject = threatStream;
+    await video.play().catch(()=>{});
+  } catch (err) {
+    console.error("Threat camera error:", err);
+  }
+}
+function stopThreatCamera() {
+  if (!threatStream) return;
+  threatStream.getTracks().forEach(track => track.stop());
+  threatStream = null;
+}
+
+function stopThreatDetection() {
+  if (threatInterval) { clearInterval(threatInterval); threatInterval = null; }
+  threatDetectionRunning = false;
+  document.getElementById('threatToggleBtn').innerText = 'Start Detection';
+  stopThreatCamera();
+  stopAlarm();
+  document.getElementById('threatResult').innerText = 'Result: -';
+}
+
+/* ========= MODEL LOADING ========= */
+document.getElementById('loadModelsBtn').addEventListener('click', async () => {
+  const faceUrl = document.getElementById('faceModelURL').value.trim();
+  const poseUrl = document.getElementById('threatModelURL').value.trim();
+
+  localStorage.setItem('faceModelURL', faceUrl);
+  localStorage.setItem('threatModelURL', poseUrl);
+  localStorage.setItem('sheetDBUrl', GOOGLE_SCRIPT_URL); // keep script URL in storage
+
+  await loadFaceModel(faceUrl);
+  await loadPoseModel(poseUrl);
+  ensureAudioContext();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+});
+
+async function loadFaceModel(url) {
+  if (!url) return alert('Enter face model URL in Settings');
+  try {
+    faceModel = await tmImage.load(url + 'model.json', url + 'metadata.json');
+    alert('Face model loaded');
+  } catch (err) {
+    console.error('Face model load error', err);
+    alert('Failed to load face model. Check the URL.');
+  }
+}
+
+async function loadPoseModel(url) {
+  if (!url) return alert('Enter threat (pose) model URL in Settings');
+  try {
+    poseModel = await tmPose.load(url + 'model.json', url + 'metadata.json');
+    alert('Threat (pose) model loaded');
+  } catch (err) {
+    console.error('Pose model load error', err);
+    alert('Failed to load threat model. Check the URL.');
+  }
+}
+
+/* ========= FACE CAPTURE & CLASSIFY ========= */
+document.getElementById('faceCaptureBtn').addEventListener('click', async () => {
+  ensureAudioContext();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+  const preview = document.getElementById('face-camera-preview');
+  const canvas = document.getElementById('capturedFace');
+  const ctx = canvas.getContext('2d');
+
+  try { 
+    ctx.drawImage(preview, 0, 0, canvas.width, canvas.height); 
+  } catch (e) { 
+    console.warn('Could not draw frame to canvas', e); 
+  }
+
+  if (!faceModel) {
+    document.getElementById('faceResult').innerText = 'Result: (No model loaded)';
+    return;
+  }
+
+  try {
+    const predictions = await faceModel.predict(canvas);
+    const best = predictions.reduce(
+      (p, c) => c.probability > p.probability ? c : p, 
+      { className: 'Unknown', probability: 0 }
+    );
+    const label = best.className || 'Unknown';
+    document.getElementById('faceResult').innerText = `Result: ${label}`;
+
+    const lnorm = String(label).toLowerCase();
+
+    if (lnorm === 'authorized') {
+      onDetected('Authorized', label);
+      triggerGate(); // <-- only runs for authorized
+    } else if (lnorm === 'unknown') {
+      onDetected('Unknown', label);
+    }
+
+  } catch (err) {
+    console.error('Face predict error', err);
+    document.getElementById('faceResult').innerText = 'Result: (prediction error)';
+  }
+});
+
+
+/* ========= THREAT (POSE) DETECTION ========= */
+document.getElementById('threatToggleBtn').addEventListener('click', () => {
+  ensureAudioContext();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+
+  if (!threatDetectionRunning) startThreatDetection();
+  else stopThreatDetection();
+});
+
+async function startThreatDetection() {
+  if (!poseModel) { alert('Please load the threat (pose) model first in Settings.'); return; }
+  await startThreatCamera();
+  threatDetectionRunning = true;
+  document.getElementById('threatToggleBtn').innerText = 'Stop Detection';
+  const video = document.getElementById('threatVideo');
+
+  threatInterval = setInterval(async () => {
+    try {
+      const { pose, posenetOutput } = await poseModel.estimatePose(video);
+      const predictions = await poseModel.predict(posenetOutput);
+      const best = predictions.reduce((p,c) => c.probability > p.probability ? c : p, { className: 'Unknown', probability: 0 });
+      const label = best.className || 'Unknown';
+      document.getElementById('threatResult').innerText = `Result: ${label}`;
+
+      const lnorm = label.toLowerCase();
+      let type = 'Normal';
+        if (lnorm.includes('tamper')) type = 'Tampering';
+        else if (lnorm.includes('loiter')) type = 'Loitering';
+
+      onDetected(type, label);
+    } catch (err) {
+      console.error('Threat detection error', err);
+    }
+  }, 1000);
+}
+
+/* ========= COMMON HANDLER, LOGGING & PUSH ========= */
+
+// Function to convert current time to IST
+function toISTString(date = new Date()) {
+  const utc = date.getTime() + (date.getTimezoneOffset() * 60000);
+  const ist = new Date(utc + (5.5 * 3600000)); // IST = UTC + 5:30
+
+  const y = ist.getFullYear();
+  const m = String(ist.getMonth() + 1).padStart(2, '0');
+  const d = String(ist.getDate()).padStart(2, '0');
+  const hh = String(ist.getHours()).padStart(2, '0');
+  const mm = String(ist.getMinutes()).padStart(2, '0');
+  const ss = String(ist.getSeconds()).padStart(2, '0');
+
+  return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+}
+
+// Push logs to Google Apps Script
+function pushLog(type, label) {
+  const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx0z2mX7QkZy0uZyfgjStDTCDz7OFN8xdWTnOM8zFN6WTzYf-_4_XISSKlHtBUIxndC/exec";
+
+  const formData = new FormData();
+  formData.append("Timestamp", toISTString()); // Always IST
+  formData.append("ThreatType", type || "TestThreat");
+  formData.append("FaceDetected", label || "TestFace");
+
+  fetch(GOOGLE_SCRIPT_URL, {
+    method: "POST",
+    body: formData
+  })
+  .then(response => response.text())
+  .then(text => console.log("Server response:", text))
+  .catch(error => console.error("Fetch error:", error));
+}
+
+// Unified handler for both face & threat events
+function onDetected(type, label) {
+  const entry = { date: toISTString(), type, label }; // Always IST
+  console.log("Detected:", entry);
+  
+  addLogRow(entry); // Update UI logs
+  pushLog(type, label);
+
+  if (type !== 'Normal' && type !== 'Authorized' && type !== 'Unknown') {
+    startAlarm();
+  } else {
+    stopAlarm();
+  }
+}
+
+/* ========= LOGS (local only, UI) ========= */
+
+function addLogRow(row) {
+  logsArr.unshift(row);
+  if (logsArr.length > 500) logsArr.pop();
+  renderLogs();
+}
+
+function renderLogs() {
+  const body = document.getElementById('logBody');
+  if (!body) return;
+  body.innerHTML = '';
+  logsArr.forEach(r => {
+    const row = document.createElement('div');
+    const d = document.createElement('div'); d.innerText = r.date;
+    const t = document.createElement('div'); t.innerText = r.type;
+    const f = document.createElement('div'); f.innerText = r.label;
+
+    if (String(r.type).toLowerCase().includes('tampering') || String(r.label).toLowerCase().includes('threat')) {
+      row.style.background = 'rgba(255,50,50,0.03)';
+    } else if (String(r.type).toLowerCase().includes('loitering')) {
+      row.style.background = 'rgba(255,180,50,0.03)';
+    } else if (String(r.label).toLowerCase().includes('authorized')) {
+      row.style.background = 'rgba(50,255,100,0.03)';
+    }
+
+    row.appendChild(d);
+    row.appendChild(t);
+    row.appendChild(f);
+    body.appendChild(row);
+  });
+}
+
+/* ========= INITIAL SETUP ========= */
+document.getElementById('hexMenu').style.display = 'grid';
+tabs.forEach(t => t.style.display = 'none');
+
+document.getElementById('backFromFace').addEventListener('click', goBackToMenu);
+document.getElementById('backFromThreat').addEventListener('click', goBackToMenu);
+document.getElementById('backFromSettings').addEventListener('click', goBackToMenu);
+document.getElementById('backFromLogs').addEventListener('click', goBackToMenu);
+
+// single load handler
+window.addEventListener('load', () => {
+  const savedFaceUrl = localStorage.getItem('faceModelURL');
+  if (savedFaceUrl) document.getElementById('faceModelURL').value = savedFaceUrl;
+  const savedThreatUrl = localStorage.getItem('threatModelURL');
+  if (savedThreatUrl) document.getElementById('threatModelURL').value = savedThreatUrl;
+  // keep the Google script url stored
+  localStorage.setItem('sheetDBUrl', GOOGLE_SCRIPT_URL);
+});
+
+window.addEventListener('beforeunload', () => {
+  stopFaceCamera();
+  stopThreatCamera();
+  stopThreatDetection();
+  stopAlarm();
+});
+</script>
+</body>
+</html>
